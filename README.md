@@ -1,10 +1,10 @@
-# Economic_Planning_plotter-1-Single-region-dynamic-
+# Economic_Planning_plotter: Single-region-dynamic
 
 Here’s a **clean README.md** draft for your project. I’ve written it in a way that makes it look like a small research simulation package, while being readable for someone who just wants to run your script:
 
 ---
 
-# Keynesian Economic Simulation Model
+# Economic Simulation Model
 
 This project implements a **Keynesian-inspired macroeconomic simulation** using an **Input-Output (IO) framework** with investment dynamics, demand feedback, and price effects.
 It generates a variety of **Keynesian economic indicators** (GDP, unemployment, multiplier, accelerator, inflation, expenditure shares, etc.) and visualizations over a 5-year horizon.
