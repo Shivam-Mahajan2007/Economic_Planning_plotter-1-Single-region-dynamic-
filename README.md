@@ -60,21 +60,12 @@ pip install numpy matplotlib
 Clone or download the project, then run:
 
 ```bash
-python keynesian_model.py
+python Economic_model.py
 ```
 
 This will generate all plots sequentially.
 
 ---
-
-## 📂 Project Structure
-
-```
-.
-├── keynesian_model.py   # Main simulation script
-└── README.md            # Documentation
-```
-
 ---
 
 ## 🧠 Notes
