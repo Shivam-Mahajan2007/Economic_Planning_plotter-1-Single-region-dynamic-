@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 # PARAMETERS
 # -----------------------------
 np.random.seed(42)
-n_industries = 10000
+n_industries = 1000
 n_steps = 60  # 5 years (60 months)
 k_iterations = 50
 
@@ -16,21 +16,24 @@ total_growth_factor = 1.0 + np.random.uniform(0.38, 0.42, n_industries)
 true_epsilon = np.random.uniform(-0.9, -0.2, n_industries)
 measured_epsilon = true_epsilon * (1.0 + np.random.uniform(-0.1, 0.1, n_industries))
 
+print("making paramenters...")
 # -----------------------------
 # MATRICES A, B
 # -----------------------------
+print("making the matricies")
 I = np.eye(n_industries)
 
 # Technical coefficients (A)
 A = np.zeros((n_industries, n_industries))
 for i in range(n_industries):
     connections = np.random.choice(n_industries, size=int(0.1 * n_industries), replace=False)
-    A[i, connections] = np.random.uniform(0.01, 0.1, size=len(connections))
+    A[i, connections] = np.random.uniform(0.01, 0.9, size=len(connections))
 
 rho = np.max(np.abs(np.linalg.eigvals(A)))
 if rho >= 1:
     A *= 0.9 / rho
-I_minus_A = I - A
+
+L = I - A
 
 print("lrontief matrix built!")
 
@@ -59,6 +62,7 @@ def neumann_approx(A, k, vec=None):
             term = A @ term
             res += term
         return res
+
 
 # -----------------------------
 # INITIAL STATES
@@ -123,13 +127,13 @@ for t in range(n_steps):
     prod_input = d_new + I_total
     X = np.clip(neumann_approx(A, k_iterations, prod_input), 0.0, None)
 
-    AS_vec = I_minus_A @ X
+    AS_vec = L @ X
     AD_val = (d_new + I_total).sum()
     AS_val = AS_vec.sum()
 
     AD.append(AD_val)
     AS.append(AS_val)
-    CAPACITY_TARGET.append((I_minus_A @ C).sum())  # potential output
+    CAPACITY_TARGET.append((L @ C).sum())  # potential output
 
     # Gaps and unemployment
     gap = (AS_val - AD_val) / (AD_val + 1e-12) * 100
@@ -179,72 +183,68 @@ for t in range(n_steps):
     
     print(t+1,"/",n_steps,"copmpleted")
 
+print("simulation complete!")
+
 # -----------------------------
-# PLOTS
+# COMPREHENSIVE SUBPLOT DASHBOARD
 # -----------------------------
 T = np.arange(n_steps)
 
-# AD vs AS with capacity target
-plt.figure(figsize=(12, 6))
-plt.plot(T, AD, label="Aggregate Demand", linewidth=2)
-plt.plot(T, AS, label="Aggregate Supply", linewidth=2)
-plt.plot(T, CAPACITY_TARGET, linestyle=":", linewidth=2, label="Capacity Target (Potential)")
-plt.legend()
-plt.grid(True, alpha=0.3)
-plt.title("Keynesian Cross: AD vs AS with Capacity Target")
-plt.xlabel("Month")
-plt.ylabel("Output Units")
-plt.show()
+# Create a 3x2 grid of subplots
+fig, axes = plt.subplots(3, 2, figsize=(16, 12))
 
-# Output gap & unemployment
-plt.figure(figsize=(12, 6))
-plt.plot(T, GAP, label="Output Gap (%)", linewidth=2)
-plt.plot(T, UNEMPLOYMENT, label="Unemployment Proxy (%)", linewidth=2)
-plt.legend()
-plt.grid(True, alpha=0.3)
-plt.title("Output Gap and Unemployment")
-plt.xlabel("Month")
-plt.ylabel("Percent")
-plt.show()
+# 1. AD vs AS with capacity target
+axes[0,0].plot(T, AD, label="Aggregate Demand", linewidth=2)
+axes[0,0].plot(T, AS, label="Aggregate Supply", linewidth=2)
+axes[0,0].plot(T, CAPACITY_TARGET, linestyle=":", linewidth=2, label="Capacity Target")
+axes[0,0].legend()
+axes[0,0].grid(True, alpha=0.3)
+axes[0,0].set_title("Keynesian Cross: AD vs AS")
+axes[0,0].set_xlabel("Month")
+axes[0,0].set_ylabel("Output Units")
 
-# Price level
-plt.figure(figsize=(12, 6))
-plt.plot(T, PRICE_LEVEL, label="Price Level (Weighted Avg)", linewidth=2, color="purple")
-plt.legend()
-plt.grid(True, alpha=0.3)
-plt.title("Price Level Over Time")
-plt.xlabel("Month")
-plt.ylabel("Index")
-plt.show()
+# 2. Output gap & unemployment
+axes[0,1].plot(T, GAP, label="Output Gap (%)", linewidth=2, color='blue')
+axes[0,1].plot(T, UNEMPLOYMENT, label="Unemployment (%)", linewidth=2, color='red')
+axes[0,1].legend()
+axes[0,1].grid(True, alpha=0.3)
+axes[0,1].set_title("Output Gap and Unemployment")
+axes[0,1].set_xlabel("Month")
+axes[0,1].set_ylabel("Percent")
 
-# Keynesian ratios: Consumption & Investment shares
-plt.figure(figsize=(12, 6))
-plt.plot(T, CONS_SHARE, label="Consumption Share of GDP (%)", linewidth=2)
-plt.plot(T, INV_SHARE, label="Investment Share of GDP (%)", linewidth=2)
-plt.legend()
-plt.grid(True, alpha=0.3)
-plt.title("Keynesian Expenditure Shares")
-plt.xlabel("Month")
-plt.ylabel("Percent of GDP")
-plt.show()
+# 3. Keynesian expenditure shares
+axes[1,0].plot(T, CONS_SHARE, label="Consumption Share", linewidth=2, color='green')
+axes[1,0].plot(T, INV_SHARE, label="Investment Share", linewidth=2, color='orange')
+axes[1,0].legend()
+axes[1,0].grid(True, alpha=0.3)
+axes[1,0].set_title("Expenditure Shares of GDP")
+axes[1,0].set_xlabel("Month")
+axes[1,0].set_ylabel("Percent")
 
-# Multiplier & Accelerator
-plt.figure(figsize=(12, 6))
-plt.plot(T, MULTIPLIER, label="Multiplier (ΔY/ΔI)", linewidth=2)
-plt.plot(T, ACCELERATOR, label="Accelerator (ΔI/ΔY)", linewidth=2)
-plt.legend()
-plt.grid(True, alpha=0.3)
-plt.title("Multiplier and Accelerator Effects")
-plt.xlabel("Month")
-plt.ylabel("Ratio")
-plt.show()
+# 4. Multiplier & Accelerator effects
+axes[1,1].plot(T, MULTIPLIER, label="Multiplier (ΔY/ΔI)", linewidth=2, color='purple')
+axes[1,1].plot(T, ACCELERATOR, label="Accelerator (ΔI/ΔY)", linewidth=2, color='brown')
+axes[1,1].legend()
+axes[1,1].grid(True, alpha=0.3)
+axes[1,1].set_title("Multiplier and Accelerator Effects")
+axes[1,1].set_xlabel("Month")
+axes[1,1].set_ylabel("Ratio")
 
-# Inflation
-plt.figure(figsize=(12, 6))
-plt.plot(T, INFLATION, label="Demand-Pull Inflation (%)", linewidth=2, color="red")
-plt.legend()
-plt.grid(True, alpha=0.3)
-plt.title("Inflation Dynamics (Keynesian Demand-Pull)")
-plt.xlabel("Month")
-plt.ylabel("Percent")
+# 5. Inflation dynamics
+axes[2,0].plot(T, INFLATION, label="Inflation (%)", linewidth=2, color='red')
+axes[2,0].legend()
+axes[2,0].grid(True, alpha=0.3)
+axes[2,0].set_title("Demand-Pull Inflation")
+axes[2,0].set_xlabel("Month")
+axes[2,0].set_ylabel("Percent")
+
+# 6. Price level
+axes[2,1].plot(T, PRICE_LEVEL, label="Price Level", linewidth=2, color='darkblue')
+axes[2,1].legend()
+axes[2,1].grid(True, alpha=0.3)
+axes[2,1].set_title("General Price Level")
+axes[2,1].set_xlabel("Month")
+axes[2,1].set_ylabel("Index")
+
+plt.tight_layout()
 plt.show()
