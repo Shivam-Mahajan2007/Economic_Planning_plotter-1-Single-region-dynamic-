@@ -5,12 +5,12 @@ import matplotlib.pyplot as plt
 # PARAMETERS
 # -----------------------------
 np.random.seed(42)
-n_industries = 1000
+n_industries = 10000
 n_steps = 60  # 5 years (60 months)
 k_iterations = 50
 
 # Target demand growth (50% in 5 years)
-total_growth_factor = 1.0 + np.random.uniform(0.38, 0.42, n_industries)
+total_growth_factor = 1.0 + np.random.uniform(0.4, 0.5, n_industries)
 
 # Elasticities
 true_epsilon = np.random.uniform(-0.9, -0.2, n_industries)
@@ -196,7 +196,7 @@ fig, axes = plt.subplots(3, 2, figsize=(16, 12))
 # 1. AD vs AS with capacity target
 axes[0,0].plot(T, AD, label="Aggregate Demand", linewidth=2)
 axes[0,0].plot(T, AS, label="Aggregate Supply", linewidth=2)
-axes[0,0].plot(T, CAPACITY_TARGET, linestyle=":", linewidth=2, label="Capacity Target")
+axes[0,0].plot(T, CAPACITY_TARGET, linestyle=":", linewidth=2, label="Potential production")
 axes[0,0].legend()
 axes[0,0].grid(True, alpha=0.3)
 axes[0,0].set_title("Keynesian Cross: AD vs AS")
