@@ -13,6 +13,8 @@ k_iterations = 50      # Neumann series depth
 true_epsilon = np.random.uniform(-2, -0.2, n_industries)
 measured_epsilon = true_epsilon * (1.0 + np.random.uniform(-0.1, 0.1, n_industries))
 
+total_growth_factor = 1.0 + np.random.uniform(0.4, 0.5, n_industries)
+
 print("Making parameters...")
 
 # -----------------------------
@@ -23,8 +25,8 @@ I = np.eye(n_industries)
 # Technical coefficients (A)
 A = np.zeros((n_industries, n_industries))
 for i in range(n_industries):
-    connections = np.random.choice(n_industries, size=int(0.05 * n_industries), replace=False)
-    A[i, connections] = np.random.uniform(0.01, 0.5, size=len(connections))
+    connections = np.random.choice(n_industries, size=int(0.01 * n_industries), replace=False)
+    A[i, connections] = np.random.uniform(0.5, 0.9, size=len(connections))
 
 # Stabilize A (ρ(A) < 1)
 rho = np.max(np.abs(np.linalg.eigvals(A)))
@@ -73,9 +75,9 @@ wL = np.random.uniform(5, 20, n_industries)
 P0 = neumann_approx(A.T, k_iterations, wL)
 P = P0.copy()
 
-# --- Capacity initialization ---
-C = 1.4*X    # starting capacity ~20% above initial output
-C_target = C * np.random.uniform(1.4, 1.6, n_industries)  # target 40–60% bigger
+X = neumann_approx(A, k_iterations, d_real)
+C = X * 1.25
+C_target = C * total_growth_factor
 
 print("Initial states set!")
 
@@ -84,13 +86,14 @@ print("Initial states set!")
 # -----------------------------
 AD, AS = [], []
 GAP, UNEMPLOYMENT = [], []
+final_CAPACITY = []
 GDP, GDP_GROWTH = [], []
 INFLATION, PRICE_LEVEL = [], []
 CONS_SHARE, INV_SHARE = [], []
 INVESTMENT = []
 DEMAND_GAP, PRICE_CHANGES = [], []
 sector_gaps = []
-Capacity = []
+
 
 # -----------------------------
 # SIMULATION LOOP
@@ -115,32 +118,31 @@ for t in range(n_steps):
 
     # 5a. Short-run investment (driven by Δd)
     I_short = B @ neumann_approx(A, k_iterations, Delta_d)
-
-    # 5b. Long-run investment (capacity building)
     steps_left = max(1, n_steps - t)
-    required_growth = (C_target / np.maximum(C, 1e-12)) ** (1.0 / steps_left) - 1.0  # max 2% per step
-    Delta_C = required_growth * C
-    I_long = B @ Delta_C
+    required_growth_factor = (C_target / np.maximum(C, 1e-12)) ** (1.0 / steps_left) - 1.0
+    required_growth_factor = np.clip(required_growth_factor, 0.0, 0.02)
+    delta_X_long = required_growth_factor * C
+    I_long = B @ delta_X_long
 
     # 5c. Total investment
-    I_total = I_short + I_long
-
-    # Update capacity
-    C = C + Delta_C
-    C_val = (L@C).sum()
+    I_total = I_short + I_long 
 
     # 6. Production
     prod_input = d_estimate + I_total
-    X = np.clip(neumann_approx(A, k_iterations, prod_input), 0.0, None)
+    X = neumann_approx(A, k_iterations, prod_input)
+    C += delta_X_long + neumann_approx(A, k_iterations, Delta_d)
 
     # 7. Aggregate demand & supply
     AD_val = (d_real + I_total).sum()
     AS_vec = L @ X
     AS_val = AS_vec.sum()
+    LRAS = L @ C
+    LRAS_val = LRAS.sum()
 
     AD.append(AD_val)
     AS.append(AS_val)
-    Capacity.append(C_val)  # potential output
+    final_CAPACITY.append(LRAS_val)  # potential output
+
 
     # 8. Gaps and unemployment
     gap = (AS_val - AD_val) / (AD_val + 1e-12) * 100
@@ -189,8 +191,8 @@ fig, axes = plt.subplots(4, 2, figsize=(16, 16))
 
 # 1. AD vs AS
 axes[0,0].plot(T, AD, label="Aggregate Demand", linewidth=2)
-axes[0,0].plot(T, AS, label="Aggregate Supply", linewidth=2)
-axes[0,0].plot(T, Capacity, label="Long run Aggregate Supply", linewidth=2)
+axes[0,0].plot(T, AS, label="(SR) Aggregate Supply", linewidth=2)
+axes[0,0].plot(T, final_CAPACITY, label="(LR) Aggregate Supply", linewidth=2)
 axes[0,0].legend(); axes[0,0].grid(True, alpha=0.3)
 axes[0,0].set_title("AD vs AS"); axes[0,0].set_xlabel("Month"); axes[0,0].set_ylabel("Output Units")
 
