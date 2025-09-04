@@ -11,6 +11,19 @@ k_iterations = 50      # Neumann series depth
 
 # Target demand growth (50% in 5 years)
 total_growth_factor = 1.0 + np.random.uniform(0.6, 0.7, n_industries)
+import numpy as np
+import matplotlib.pyplot as plt
+
+# -----------------------------
+# PARAMETERS
+# -----------------------------
+np.random.seed(42)
+n_industries = 1000  # reduce if too slow
+n_steps = 60           # time steps
+k_iterations = 50      # Neumann series depth
+
+# Target demand growth (50% in 5 years)
+total_growth_factor = 1.0 + np.random.uniform(0.6, 0.7, n_industries)
 
 # Elasticities
 true_epsilon = np.random.uniform(-2, -0.2, n_industries)
