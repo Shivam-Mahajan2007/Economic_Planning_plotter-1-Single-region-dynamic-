@@ -5,9 +5,12 @@ import matplotlib.pyplot as plt
 # PARAMETERS
 # -----------------------------
 np.random.seed(42)
-n_industries = 1000    # reduce if too slow
+n_industries = 1000  # reduce if too slow
 n_steps = 60           # time steps
 k_iterations = 50      # Neumann series depth
+
+# Target demand growth (50% in 5 years)
+total_growth_factor = 1.0 + np.random.uniform(0.6, 0.7, n_industries)
 
 # Elasticities
 true_epsilon = np.random.uniform(-2, -0.2, n_industries)
@@ -26,7 +29,7 @@ for i in range(n_industries):
     connections = np.random.choice(n_industries, size=int(0.01 * n_industries), replace=False)
     A[i, connections] = np.random.uniform(0.5, 0.9, size=len(connections))
 
-# Stabilize A (ρ(A) < 1)
+# Stabilize A ((A) < 1)
 rho = np.max(np.abs(np.linalg.eigvals(A)))
 if rho >= 1:
     A *= 0.9 / rho
@@ -35,7 +38,7 @@ L = I - A
 
 # Capital coefficients (B)
 B = np.zeros((n_industries, n_industries))
-cap_providers = list(range(10, 30))
+cap_providers = list(range(100, 300))
 for i in range(n_industries):
     providers = np.random.choice(cap_providers, size=min(3, len(cap_providers)), replace=False)
     B[i, providers] = np.random.uniform(0.1, 0.9, size=len(providers))
@@ -63,32 +66,40 @@ def neumann_approx(A, k, vec=None):
 # INITIAL STATES
 # -----------------------------
 d_real = np.random.uniform(200, 500, n_industries)
-d_estimate = d_real.copy()  # Start with perfect estimation
-
-# Initial production
+d_estimate = d_real 
 X = neumann_approx(A, k_iterations, d_real)
+C = X * 1.3
 
-# Equilibrium price
+C_target = C * total_growth_factor
+
 wL = np.random.uniform(5, 20, n_industries)
 P0 = neumann_approx(A.T, k_iterations, wL)
-P = P0.copy()
+P = P0
 
-X = neumann_approx(A, k_iterations, d_real)
 print("Initial states set!")
 
 # -----------------------------
 # STORAGE
 # -----------------------------
 AD, AS = [], []
-GAP, UNEMPLOYMENT = [], []
 CAPACITY_TARGET = []
+GAP, UNEMPLOYMENT = [], []
 GDP, GDP_GROWTH = [], []
-INFLATION, PRICE_LEVEL = [], []
+INFLATION, PRICE_LEVEL = [], [] # INFLATION will now be CPI-based, PRICE_LEVEL will be an index
 CONS_SHARE, INV_SHARE = [], []
 INVESTMENT = []
 DEMAND_GAP, PRICE_CHANGES = [], []
 sector_gaps = []
 
+# NEW: Variables for CPI calculation
+CPI_SERIES = []  # Consumer Price Index level
+X_prev = X.copy() # Store initial production for base period
+P_prev = P0.copy() # Store initial prices for base period
+base_period_value = X_prev @ P_prev  # Value of basket at t=0
+
+# Initialize Price Level Index (starts at 1.0 for base period)
+price_level_index = 1.0
+PRICE_LEVEL.append(price_level_index)
 
 # -----------------------------
 # SIMULATION LOOP
@@ -103,25 +114,34 @@ for t in range(n_steps):
     # 2. Demand gap
     delta_d = d_real - d_estimate
 
-    # 3. Price adjustment
-    Delta_P = (delta_d / (d_real + 1e-12)) * (P0 / true_epsilon)
+    # 3. Price adjustment (CORE ALGORITHM - UNTOUCHED)
+    Delta_P = (delta_d / d_real) * (P0 / true_epsilon)
     P = P0 + Delta_P
 
     # 4. Update estimated demand
-    Delta_d = d_estimate * (Delta_P / (P0 + 1e-12)) * measured_epsilon
+    Delta_d = d_estimate * (Delta_P / P0) * measured_epsilon
     d_estimate = d_estimate + Delta_d
 
     # 5a. Short-run investment (driven by Δd)
+    steps_left = max(1, n_steps - t)
+    growth_rate = ((C_target / np.maximum(C, 1e-12)) ** (1.0 / steps_left)) - 1.0
+    growth_rate = np.clip(growth_rate, 0.0, 0.02)  # cap growth rate
+    G = np.diag(growth_rate)
+
     I_short = B @ neumann_approx(A, k_iterations, Delta_d)
+    I_long = B @ (G @ C)
 
     # 5c. Total investment
-    I_total = I_short
+    I_total = I_short + I_long
 
     # 6. Production
     prod_input = d_estimate + I_total
-    X = np.clip(neumann_approx(A, k_iterations, prod_input), 0.0, None)
+    X = neumann_approx(A, k_iterations, prod_input)
 
-    # 7. Aggregate demand & supply
+    # 7. Update capacity (only long-run growth)
+    C = C + G @ C
+
+    # 8. Aggregate demand & supply
     AD_val = (d_real + I_total).sum()
     AS_vec = L @ X
     AS_val = AS_vec.sum()
@@ -129,42 +149,60 @@ for t in range(n_steps):
     AD.append(AD_val)
     AS.append(AS_val)
 
-    # 8. Gaps and unemployment
+    # 9. Gaps and unemployment
     gap = (AS_val - AD_val) / (AD_val + 1e-12) * 100
     GAP.append(gap)
     UNEMPLOYMENT.append(max(0, 5 + 0.5 * gap))
 
-    # 9. GDP and growth
+    # 10. GDP and growth
     GDP.append(AS_val)
     if t > 0:
         GDP_GROWTH.append((AS_val / GDP[-2] - 1) * 100)
     else:
         GDP_GROWTH.append(0)
 
-    # 10. Inflation and price tracking
-    INFLATION.append((P.sum() / P0.sum() - 1) * 100)
-    price_level_t = (P @ X) / (X.sum() + 1e-12)
-    PRICE_LEVEL.append(price_level_t)
+    # 11. NEW: CALCULATE CPI AND INFLATION
+    # CPI_t = (Cost of basket in period t) / (Cost of basket in base period)
+    current_basket_value = X @ P
+    CPI_t = current_basket_value / base_period_value
+    CPI_SERIES.append(CPI_t)
+    
+    # Calculate inflation rate: (CPI_t - CPI_{t-1}) / CPI_{t-1}
+    if t == 0:
+        # For the first period, inflation is calculated relative to the base period (t=0, CPI=1.0 implicitly)
+        inflation_rate = (CPI_t - 1.0) / 1.0
+    else:
+        inflation_rate = (CPI_t - CPI_SERIES[t-1]) / CPI_SERIES[t-1]
+    
+    INFLATION.append(inflation_rate * 100) # Store as percentage
 
-    # 11. Expenditure shares
-    C_share = d_real.sum() / (AS_val + 1e-12) * 100
-    I_share = I_total.sum() / (AS_val + 1e-12) * 100
+    # 12. NEW: UPDATE GENERAL PRICE LEVEL INDEX USING INFLATION
+    # price_level_t = price_level_{t-1} * (1 + inflation_rate)
+    price_level_index = price_level_index * (1 + inflation_rate)
+    PRICE_LEVEL.append(price_level_index)
+
+    # 13. Expenditure shares
+    C_share = d_real.sum() / AS_val * 100
+    I_share = I_total.sum() / AS_val * 100
     CONS_SHARE.append(C_share)
     INV_SHARE.append(I_share)
 
-    # 12. Sector-level gaps
+    # 14. Sector-level gaps
     sector_gap_t = (AS_vec - (d_real + I_total)) / ((d_real + I_total) + 1e-12) * 100
     sector_gaps.append(sector_gap_t)
 
-    # 13. Tracking accuracy
-    demand_gap = np.mean(np.abs(delta_d) / (d_real + 1e-12)) * 100
+    # 15. Tracking accuracy
+    demand_gap = np.mean(np.abs(delta_d) / d_real) * 100
     DEMAND_GAP.append(demand_gap)
-    PRICE_CHANGES.append(np.mean(np.abs(Delta_P) / (P0 + 1e-12)) * 100)
+    PRICE_CHANGES.append(np.mean(np.abs(Delta_P) /P0) * 100)
 
     # Save investment
     INVESTMENT.append(I_total.sum())
 
-    print(t+1, "/", n_steps, "completed")
+    # Save LRAS
+    CAPACITY_TARGET.append((L @ C).sum())
+    print (t+1,"/", n_steps, "completed")
+
 
 print("Simulation complete!")
 
@@ -172,50 +210,61 @@ print("Simulation complete!")
 # PLOTTING
 # -----------------------------
 T = np.arange(n_steps)
+# For inflation and price level, we have n_steps points (from t=1 to t=n_steps)
+T_inflation = np.arange(1, n_steps+1) 
+# For price level, we have n_steps+1 points (from t=0 to t=n_steps)
+T_price_level = np.arange(n_steps+1) 
+
 fig, axes = plt.subplots(4, 2, figsize=(16, 16))
 
 # 1. AD vs AS
 axes[0,0].plot(T, AD, label="Aggregate Demand", linewidth=2)
 axes[0,0].plot(T, AS, label="Aggregate Supply", linewidth=2)
+axes[0,0].plot(T, CAPACITY_TARGET, label="Long run Aggregate Supply", linewidth=2)
+
+# Target LRAS line
+LRAS_target_val = (L @ C_target).sum()
+axes[0,0].axhline(LRAS_target_val, color="black", linestyle="--", linewidth=2,label="Target LRAS")
+
 axes[0,0].legend(); axes[0,0].grid(True, alpha=0.3)
-axes[0,0].set_title("AD vs AS"); axes[0,0].set_xlabel("Month"); axes[0,0].set_ylabel("Output Units")
+axes[0,0].set_title("AD vs AS"); axes[0,0].set_xlabel(""); axes[0,0].set_ylabel("Output Units")
 
 # 2. Output gap & unemployment
 axes[0,1].plot(T, GAP, label="Output Gap (%)", linewidth=2, color='blue')
 axes[0,1].plot(T, UNEMPLOYMENT, label="Unemployment (%)", linewidth=2, color='red')
 axes[0,1].legend(); axes[0,1].grid(True, alpha=0.3)
-axes[0,1].set_title("Output Gap and Unemployment"); axes[0,1].set_xlabel("Month"); axes[0,1].set_ylabel("Percent")
+axes[0,1].set_title("Output Gap and Unemployment"); axes[0,1].set_xlabel(""); axes[0,1].set_ylabel("Percent")
 
 # 3. Expenditure shares
 axes[1,0].plot(T, CONS_SHARE, label="Consumption Share", linewidth=2, color='green')
 axes[1,0].plot(T, INV_SHARE, label="Investment Share", linewidth=2, color='orange')
 axes[1,0].legend(); axes[1,0].grid(True, alpha=0.3)
-axes[1,0].set_title("Expenditure Shares of GDP"); axes[1,0].set_xlabel("Month"); axes[1,0].set_ylabel("Percent")
+axes[1,0].set_title("Expenditure Shares of GDP"); axes[1,0].set_xlabel(""); axes[1,0].set_ylabel("Percent")
 
 # 4. GDP growth
 axes[1,1].plot(T, GDP_GROWTH, label="GDP Growth (%)", linewidth=2, color='purple')
 axes[1,1].legend(); axes[1,1].grid(True, alpha=0.3)
-axes[1,1].set_title("GDP Growth Rate"); axes[1,1].set_xlabel("Month"); axes[1,1].set_ylabel("Percent")
+axes[1,1].set_title("GDP Growth Rate"); axes[1,1].set_xlabel(""); axes[1,1].set_ylabel("Percent")
 
-# 5. Inflation
-axes[2,0].plot(T, INFLATION, label="Inflation (%)", linewidth=2, color='red')
+# 5. NEW: CPI-based Inflation
+axes[2,0].plot(T_inflation, INFLATION, label="Inflation (%)", linewidth=2, color='red')
 axes[2,0].legend(); axes[2,0].grid(True, alpha=0.3)
-axes[2,0].set_title("Demand-Pull Inflation"); axes[2,0].set_xlabel("Month"); axes[2,0].set_ylabel("Percent")
+axes[2,0].set_title("CPI Inflation Rate"); axes[2,0].set_xlabel(""); axes[2,0].set_ylabel("Percent")
 
-# 6. Price level
-axes[2,1].plot(T, PRICE_LEVEL, label="Price Level", linewidth=2, color='darkblue')
+# 6. NEW: Price Level Index
+axes[2,1].plot(T_price_level, PRICE_LEVEL, label="Price Level Index", linewidth=2, color='darkblue')
 axes[2,1].legend(); axes[2,1].grid(True, alpha=0.3)
-axes[2,1].set_title("General Price Level"); axes[2,1].set_xlabel("Month"); axes[2,1].set_ylabel("Index")
+axes[2,1].set_title("General Price Level (Index)"); axes[2,1].set_xlabel(""); axes[2,1].set_ylabel("Index (Base=1.0)")
 
 # 7. Demand estimation gap
 axes[3,0].plot(T, DEMAND_GAP, label="Demand Estimation Gap (%)", linewidth=2, color='orange')
 axes[3,0].legend(); axes[3,0].grid(True, alpha=0.3)
-axes[3,0].set_title("Demand Estimation Accuracy"); axes[3,0].set_xlabel("Month"); axes[3,0].set_ylabel("Percent Gap")
+axes[3,0].set_title("Demand Estimation Accuracy"); axes[3,0].set_xlabel(""); axes[3,0].set_ylabel("Percent Gap")
 
-# 8. Price changes
+# 8. Price changes (from the core algorithm)
 axes[3,1].plot(T, PRICE_CHANGES, label="Price Changes (%)", linewidth=2, color='green')
 axes[3,1].legend(); axes[3,1].grid(True, alpha=0.3)
-axes[3,1].set_title("Price Adjustments"); axes[3,1].set_xlabel("Month"); axes[3,1].set_ylabel("Percent Change")
+axes[3,1].set_title("Price Adjustments (Algorithm)"); axes[3,1].set_xlabel(""); axes[3,1].set_ylabel("Percent Change")
 
 plt.tight_layout()
 plt.show()
