@@ -1,283 +1,278 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-# -----------------------------
-# PARAMETERS
-# -----------------------------
 np.random.seed(42)
-n_industries = 1000  # reduce if too slow
-n_steps = 60           # time steps
-k_iterations = 50      # Neumann series depth
-
-# Target demand growth (50% in 5 years)
-total_growth_factor = 1.0 + np.random.uniform(0.6, 0.7, n_industries)
-import numpy as np
-import matplotlib.pyplot as plt
 
 # -----------------------------
 # PARAMETERS
 # -----------------------------
-np.random.seed(42)
-n_industries = 1000  # reduce if too slow
-n_steps = 60           # time steps
-k_iterations = 50      # Neumann series depth
+n_industries = 1000      # reduce for speed; increase to test scalability
+n_steps = 60             # number of discrete time steps
+k_iterations = 50        # depth of Neumann approximation (paper suggests ~50)
+connectivity = 0.01      # fraction of nonzero columns per row in A
+target_growth_min = 0.6  # target total growth factor lower bound (50%)
+target_growth_max = 0.7  # upper bound (60%)
+delta = np.random.uniform(0.002, 0.004, n_industries)
 
-# Target demand growth (50% in 5 years)
-total_growth_factor = 1.0 + np.random.uniform(0.6, 0.7, n_industries)
+def neumann_approx(A, v, k):
+    res = v.copy().astype(float)
+    term = v.copy().astype(float)
+    for _ in range(1, k+1):
+        term = A @ term
+        res += term
+    return res
 
-# Elasticities
-true_epsilon = np.random.uniform(-2, -0.2, n_industries)
-measured_epsilon = true_epsilon * (1.0 + np.random.uniform(-0.1, 0.1, n_industries))
-
-print("Making parameters...")
-
+print("parameters set.")
 # -----------------------------
-# MATRICES A, B
+# BUILD MATRICES
 # -----------------------------
 I = np.eye(n_industries)
 
-# Technical coefficients (A)
-A = np.zeros((n_industries, n_industries))
+# Construct a sparse-like random technical coefficient matrix A
+A = np.zeros((n_industries, n_industries), dtype=float)
 for i in range(n_industries):
-    connections = np.random.choice(n_industries, size=int(0.01 * n_industries), replace=False)
-    A[i, connections] = np.random.uniform(0.5, 0.9, size=len(connections))
+    k_conn = max(1, int(connectivity * n_industries))
+    choices = np.random.choice(n_industries, size=k_conn, replace=False)
+    A[i, choices] = np.random.uniform(0.05, 0.25, size=len(choices))
 
-# Stabilize A ((A) < 1)
-rho = np.max(np.abs(np.linalg.eigvals(A)))
-if rho >= 1:
+# Ensure spectral radius < 1 (stabilize)
+eigvals = np.linalg.eigvals(A)
+rho = max(np.abs(eigvals))
+if rho >= 1 - 1e-6:
     A *= 0.9 / rho
 
 L = I - A
+print("leontif matrix L built.")
 
-# Capital coefficients (B)
+# Capital coefficients B (sparse-like)
 B = np.zeros((n_industries, n_industries))
-cap_providers = list(range(100, 300))
+cap_providers = np.arange(int(0.1*n_industries), int(0.3*n_industries))
 for i in range(n_industries):
     providers = np.random.choice(cap_providers, size=min(3, len(cap_providers)), replace=False)
-    B[i, providers] = np.random.uniform(0.1, 0.9, size=len(providers))
-
-print("Matrices built!")
-
-# -----------------------------
-# NEUMANN SERIES APPROXIMATION
-# -----------------------------
-def neumann_approx(A, k, vec=None):
-    if vec is None:
-        S, P = I.copy(), I.copy()
-        for _ in range(1, k+1):
-            P = P @ A
-            S += P
-        return S
-    else:
-        res, term = vec.copy(), vec.copy()
-        for _ in range(1, k+1):
-            term = A @ term
-            res += term
-        return res
+    B[i, providers] = np.random.uniform(0.2, 1, size=len(providers))
+print("Capital matrix B built.")
 
 # -----------------------------
 # INITIAL STATES
 # -----------------------------
-d_real = np.random.uniform(200, 500, n_industries)
-d_estimate = d_real 
-X = neumann_approx(A, k_iterations, d_real)
+d_real = np.random.uniform(200.0, 500.0, n_industries)
+d_est = d_real.copy()
+X = neumann_approx(A, d_real, k_iterations)
 C = X * 1.3
-
+total_growth_factor = 1.0 + np.random.uniform(target_growth_min, target_growth_max, n_industries)
 C_target = C * total_growth_factor
 
-wL = np.random.uniform(5, 20, n_industries)
-P0 = neumann_approx(A.T, k_iterations, wL)
-P = P0
+wL = np.random.uniform(5.0, 20.0, n_industries)
+P0 = neumann_approx(A.T, wL, k_iterations)
+P = P0.copy()
 
-print("Initial states set!")
-
-# -----------------------------
-# STORAGE
-# -----------------------------
-AD, AS = [], []
-CAPACITY_TARGET = []
-GAP, UNEMPLOYMENT = [], []
-GDP, GDP_GROWTH = [], []
-INFLATION, PRICE_LEVEL = [], [] # INFLATION will now be CPI-based, PRICE_LEVEL will be an index
-CONS_SHARE, INV_SHARE = [], []
-INVESTMENT = []
-DEMAND_GAP, PRICE_CHANGES = [], []
-sector_gaps = []
-
-# NEW: Variables for CPI calculation
-CPI_SERIES = []  # Consumer Price Index level
-X_prev = X.copy() # Store initial production for base period
-P_prev = P0.copy() # Store initial prices for base period
-base_period_value = X_prev @ P_prev  # Value of basket at t=0
-
-# Initialize Price Level Index (starts at 1.0 for base period)
-price_level_index = 1.0
-PRICE_LEVEL.append(price_level_index)
+true_epsilon = np.random.uniform(-2.0, -0.2, n_industries)
+measured_epsilon = true_epsilon * (1.0 + np.random.uniform(-0.2, 0.2, n_industries))
+print("Initial states set.")
 
 # -----------------------------
-# SIMULATION LOOP
+# STORAGE FOR TIME SERIES
 # -----------------------------
-print("Simulation started!")
+AD_series = []
+AS_series = []
+GDP = []
+GDP_growth = []
+INFLATION = []
+CPI_SERIES = []
+PRICE_LEVEL = []
+PRICE_INDEX = 1.0
+INVESTMENT_SERIES = []
+INVESTMENT_SHORT_SERIES = []
+INVESTMENT_LONG_SERIES = []
+DEMAND_GAP = []
+PRICE_CHANGES = []
+CAPACITY_TARGET_SERIES = []
 
+# Track prices in selected industries
+selected_inds = [0, 1, 2, 3, 4]  # first 5 industries
+PRICE_SERIES_INDS = {i: [] for i in selected_inds}
+
+X_prev = X.copy()
+P_prev = P0.copy()
+base_basket_value = X_prev @ P_prev
+
+# -----------------------------
+# SIMULATION LOOP 
+# -----------------------------
+print("Starting simulation...")
 for t in range(n_steps):
-    # 1. Real demand grows exogenously
-    growth = 1.0 + np.random.uniform(0.005, 0.01, n_industries)
+    growth = 1.0 + np.random.uniform(0.002, 0.008, n_industries)
     d_real = d_real * growth
-
-    # 2. Demand gap
-    delta_d = d_real - d_estimate
-
-    # 3. Price adjustment (CORE ALGORITHM - UNTOUCHED)
-    Delta_P = (delta_d / d_real) * (P0 / true_epsilon)
+    delta_d = d_real - d_est
+    frac = np.divide(delta_d, d_real) 
+    Delta_P = frac * (P0 / true_epsilon)
+    ratio = np.divide(Delta_P, P0)
+    Delta_d = d_est * ratio * measured_epsilon
+    d_est = d_est + Delta_d
+    
     P = P0 + Delta_P
 
-    # 4. Update estimated demand
-    Delta_d = d_estimate * (Delta_P / P0) * measured_epsilon
-    d_estimate = d_estimate + Delta_d
+    # record selected prices
+    for i in selected_inds:
+        PRICE_SERIES_INDS[i].append(P[i])
 
-    # 5a. Short-run investment (driven by Δd)
     steps_left = max(1, n_steps - t)
-    growth_rate = ((C_target / np.maximum(C, 1e-12)) ** (1.0 / steps_left)) - 1.0
-    growth_rate = np.clip(growth_rate, 0.0, 0.02)  # cap growth rate
-    G = np.diag(growth_rate)
+    C = C * (1.0 - delta)
+    growth_rate = np.power(np.divide(C_target, C), 1.0 / steps_left) - 1.0
+    G_diag = growth_rate
 
-    I_short = B @ neumann_approx(A, k_iterations, Delta_d)
-    I_long = B @ (G @ C)
-
-    # 5c. Total investment
+    I_short = B @ neumann_approx(A, Delta_d, k_iterations)
+    I_long = B @ (G_diag * C)
     I_total = I_short + I_long
 
-    # 6. Production
-    prod_input = d_estimate + I_total
-    X = neumann_approx(A, k_iterations, prod_input)
+    d_ag = d_est + I_total
+    X = neumann_approx(A, d_ag, k_iterations)
+    C = C + (G_diag * C) + neumann_approx(A, Delta_d, k_iterations)
 
-    # 7. Update capacity (only long-run growth)
-    C = C + G @ C
-
-    # 8. Aggregate demand & supply
     AD_val = (d_real + I_total).sum()
     AS_vec = L @ X
     AS_val = AS_vec.sum()
 
-    AD.append(AD_val)
-    AS.append(AS_val)
-
-    # 9. Gaps and unemployment
-    gap = (AS_val - AD_val) / (AD_val + 1e-12) * 100
-    GAP.append(gap)
-    UNEMPLOYMENT.append(max(0, 5 + 0.5 * gap))
-
-    # 10. GDP and growth
-    GDP.append(AS_val)
-    if t > 0:
-        GDP_GROWTH.append((AS_val / GDP[-2] - 1) * 100)
-    else:
-        GDP_GROWTH.append(0)
-
-    # 11. NEW: CALCULATE CPI AND INFLATION
-    # CPI_t = (Cost of basket in period t) / (Cost of basket in base period)
-    current_basket_value = X @ P
-    CPI_t = current_basket_value / base_period_value
-    CPI_SERIES.append(CPI_t)
-    
-    # Calculate inflation rate: (CPI_t - CPI_{t-1}) / CPI_{t-1}
+    AD_series.append(AD_val)
+    AS_series.append(AS_val)
+    GDP.append(AS_vec @ P)
     if t == 0:
-        # For the first period, inflation is calculated relative to the base period (t=0, CPI=1.0 implicitly)
-        inflation_rate = (CPI_t - 1.0) / 1.0
+        GDP_growth.append(0.0)
     else:
-        inflation_rate = (CPI_t - CPI_SERIES[t-1]) / CPI_SERIES[t-1]
-    
-    INFLATION.append(inflation_rate * 100) # Store as percentage
+        GDP_growth.append((GDP[-1] / GDP[-2] - 1.0) * 100.0)
 
-    # 12. NEW: UPDATE GENERAL PRICE LEVEL INDEX USING INFLATION
-    # price_level_t = price_level_{t-1} * (1 + inflation_rate)
-    price_level_index = price_level_index * (1 + inflation_rate)
-    PRICE_LEVEL.append(price_level_index)
+    current_basket_value = X @ P
+    CPI_t = current_basket_value / base_basket_value
+    CPI_SERIES.append(CPI_t)
+    if t == 0:
+        inflation_rate = (CPI_t - 1.0) / 1.0 
+    else:
+        inflation_rate =((CPI_t - CPI_SERIES[t-1]) / CPI_SERIES[t-1]) - GDP_growth[-1]/100.0
+    INFLATION.append(inflation_rate * 100.0)
+    PRICE_INDEX *= (1.0 + inflation_rate)
+    PRICE_LEVEL.append(PRICE_INDEX)
 
-    # 13. Expenditure shares
-    C_share = d_real.sum() / AS_val * 100
-    I_share = I_total.sum() / AS_val * 100
-    CONS_SHARE.append(C_share)
-    INV_SHARE.append(I_share)
+    demand_gap_pct = np.mean(np.abs(delta_d) / d_real) * 100.0
+    DEMAND_GAP.append(demand_gap_pct)
+    PRICE_CHANGES.append(np.mean(np.abs(Delta_P) / P0) * 100.0)
+    INVESTMENT_SERIES.append(I_total.sum())
+    CAPACITY_TARGET_SERIES.append((L @ C).sum())
 
-    # 14. Sector-level gaps
-    sector_gap_t = (AS_vec - (d_real + I_total)) / ((d_real + I_total) + 1e-12) * 100
-    sector_gaps.append(sector_gap_t)
+    P_prev = P.copy()
 
-    # 15. Tracking accuracy
-    demand_gap = np.mean(np.abs(delta_d) / d_real) * 100
-    DEMAND_GAP.append(demand_gap)
-    PRICE_CHANGES.append(np.mean(np.abs(Delta_P) /P0) * 100)
+    INVESTMENT_SHORT_SERIES.append(I_short.sum())
+    INVESTMENT_LONG_SERIES.append(I_long.sum())
 
-    # Save investment
-    INVESTMENT.append(I_total.sum())
+    print("Step", t+1, "/", n_steps)
 
-    # Save LRAS
-    CAPACITY_TARGET.append((L @ C).sum())
-    print (t+1,"/", n_steps, "completed")
-
-
-print("Simulation complete!")
+print("Simulation finished.")
 
 # -----------------------------
-# PLOTTING
+# COMBINED SUBPLOTS
 # -----------------------------
+fig, axes = plt.subplots(4, 2, figsize=(14, 10))
 T = np.arange(n_steps)
-# For inflation and price level, we have n_steps points (from t=1 to t=n_steps)
-T_inflation = np.arange(1, n_steps+1) 
-# For price level, we have n_steps+1 points (from t=0 to t=n_steps)
-T_price_level = np.arange(n_steps+1) 
 
-fig, axes = plt.subplots(4, 2, figsize=(16, 16))
+# (0,0) AD vs AS
+ax = axes[0,0]
+ax.plot(T, AD_series, label="Aggregate Demand")
+ax.plot(T, AS_series, label="Aggregate Supply")
+ax.plot(T, CAPACITY_TARGET_SERIES, label="Long run Aggregate Supply")
+ax.axhline(y=CAPACITY_TARGET_SERIES[-1], color='k', linestyle='--', label="Target LRAS")
+ax.set_title("AD vs AS")
+ax.set_ylabel("Output Units")
+ax.legend()
+ax.grid(True)
 
-# 1. AD vs AS
-axes[0,0].plot(T, AD, label="Aggregate Demand", linewidth=2)
-axes[0,0].plot(T, AS, label="Aggregate Supply", linewidth=2)
-axes[0,0].plot(T, CAPACITY_TARGET, label="Long run Aggregate Supply", linewidth=2)
+# (0,1) Output gap and unemployment
+ax = axes[0,1]
+output_gap = (np.array(AD_series) - np.array(AS_series)) / AS_series * 100
+unemployment = 5 + 0.2 * output_gap
+ax.plot(T, output_gap, label="Output Gap (%)")
+ax.plot(T, unemployment, label="Unemployment (%)")
+ax.set_title("Output Gap and Unemployment")
+ax.set_ylabel("Percent")
+ax.legend()
+ax.grid(True)
 
-# Target LRAS line
-LRAS_target_val = (L @ C_target).sum()
-axes[0,0].axhline(LRAS_target_val, color="black", linestyle="--", linewidth=2,label="Target LRAS")
+# (1,0) Expenditure shares
+ax = axes[1,0]
+consumption_share = np.array(AD_series) / (np.array(AD_series) + np.array(INVESTMENT_SERIES)) * 100
+investment_share = np.array(INVESTMENT_SERIES) / (np.array(AD_series) + np.array(INVESTMENT_SERIES)) * 100
+ax.plot(T, consumption_share, label="Consumption Share")
+ax.plot(T, investment_share, label="Investment Share")
+ax.set_title("Expenditure Shares of GDP")
+ax.set_ylabel("Percent")
+ax.legend()
+ax.grid(True)
 
-axes[0,0].legend(); axes[0,0].grid(True, alpha=0.3)
-axes[0,0].set_title("AD vs AS"); axes[0,0].set_xlabel(""); axes[0,0].set_ylabel("Output Units")
+# (1,1) GDP growth
+ax = axes[1,1]
+ax.plot(T, GDP_growth, color="purple", label="GDP Growth (%)")
+ax.set_title("GDP Growth Rate")
+ax.set_ylabel("Percent")
+ax.legend()
+ax.grid(True)
 
-# 2. Output gap & unemployment
-axes[0,1].plot(T, GAP, label="Output Gap (%)", linewidth=2, color='blue')
-axes[0,1].plot(T, UNEMPLOYMENT, label="Unemployment (%)", linewidth=2, color='red')
-axes[0,1].legend(); axes[0,1].grid(True, alpha=0.3)
-axes[0,1].set_title("Output Gap and Unemployment"); axes[0,1].set_xlabel(""); axes[0,1].set_ylabel("Percent")
+# (2,0) Inflation
+ax = axes[2,0]
+ax.plot(T, INFLATION, color="red", label="Inflation (%)")
+ax.set_title("CPI Inflation Rate")
+ax.set_ylabel("Percent")
+ax.legend()
+ax.grid(True)
 
-# 3. Expenditure shares
-axes[1,0].plot(T, CONS_SHARE, label="Consumption Share", linewidth=2, color='green')
-axes[1,0].plot(T, INV_SHARE, label="Investment Share", linewidth=2, color='orange')
-axes[1,0].legend(); axes[1,0].grid(True, alpha=0.3)
-axes[1,0].set_title("Expenditure Shares of GDP"); axes[1,0].set_xlabel(""); axes[1,0].set_ylabel("Percent")
+# (2,1) Price level
+ax = axes[2,1]
+ax.plot(T, PRICE_LEVEL, color="blue", label="Price Level Index")
+ax.set_title("General Price Level (Index)")
+ax.set_ylabel("Index (Base=1.0)")
+ax.legend()
+ax.grid(True)
 
-# 4. GDP growth
-axes[1,1].plot(T, GDP_GROWTH, label="GDP Growth (%)", linewidth=2, color='purple')
-axes[1,1].legend(); axes[1,1].grid(True, alpha=0.3)
-axes[1,1].set_title("GDP Growth Rate"); axes[1,1].set_xlabel(""); axes[1,1].set_ylabel("Percent")
+# (3,0) Demand estimation accuracy
+ax = axes[3,0]
+ax.plot(T, DEMAND_GAP, color="orange", label="Demand Estimation Gap (%)")
+ax.set_title("Demand Estimation Accuracy")
+ax.set_ylabel("Percent Gap")
+ax.legend()
+ax.grid(True)
 
-# 5. NEW: CPI-based Inflation
-axes[2,0].plot(T_inflation, INFLATION, label="Inflation (%)", linewidth=2, color='red')
-axes[2,0].legend(); axes[2,0].grid(True, alpha=0.3)
-axes[2,0].set_title("CPI Inflation Rate"); axes[2,0].set_xlabel(""); axes[2,0].set_ylabel("Percent")
-
-# 6. NEW: Price Level Index
-axes[2,1].plot(T_price_level, PRICE_LEVEL, label="Price Level Index", linewidth=2, color='darkblue')
-axes[2,1].legend(); axes[2,1].grid(True, alpha=0.3)
-axes[2,1].set_title("General Price Level (Index)"); axes[2,1].set_xlabel(""); axes[2,1].set_ylabel("Index (Base=1.0)")
-
-# 7. Demand estimation gap
-axes[3,0].plot(T, DEMAND_GAP, label="Demand Estimation Gap (%)", linewidth=2, color='orange')
-axes[3,0].legend(); axes[3,0].grid(True, alpha=0.3)
-axes[3,0].set_title("Demand Estimation Accuracy"); axes[3,0].set_xlabel(""); axes[3,0].set_ylabel("Percent Gap")
-
-# 8. Price changes (from the core algorithm)
-axes[3,1].plot(T, PRICE_CHANGES, label="Price Changes (%)", linewidth=2, color='green')
-axes[3,1].legend(); axes[3,1].grid(True, alpha=0.3)
-axes[3,1].set_title("Price Adjustments (Algorithm)"); axes[3,1].set_xlabel(""); axes[3,1].set_ylabel("Percent Change")
+# (3,1) Price adjustments
+ax = axes[3,1]
+ax.plot(T, PRICE_CHANGES, color="green", label="Price Changes (%)")
+ax.set_title("Price Adjustments (Algorithm)")
+ax.set_ylabel("Percent Change")
+ax.legend()
+ax.grid(True)
 
 plt.tight_layout()
+plt.show()
+
+# -----------------------------
+# Short vs Long Term Investment
+# -----------------------------
+fig2, ax2 = plt.subplots(figsize=(10, 5))
+ax2.plot(T, INVESTMENT_SHORT_SERIES, label="Short-term Investment")
+ax2.plot(T, INVESTMENT_LONG_SERIES, label="Long-term Investment")
+ax2.plot(T, np.array(INVESTMENT_SHORT_SERIES) + np.array(INVESTMENT_LONG_SERIES),
+         linestyle="--", color="gray", label="Total Investment")
+ax2.set_title("Short-term vs Long-term Investment")
+ax2.set_ylabel("Investment Units")
+ax2.set_xlabel("Time Step")
+ax2.legend()
+ax2.grid(True)
+plt.show()
+
+# -----------------------------
+#Prices in Selected Industries
+# -----------------------------
+fig3, ax3 = plt.subplots(figsize=(10, 6))
+for i, series in PRICE_SERIES_INDS.items():
+    ax3.plot(T, series, label=f"Industry {i}")
+ax3.set_title("Prices in Selected Industries")
+ax3.set_ylabel("Price")
+ax3.set_xlabel("Time Step")
+ax3.legend()
+ax3.grid(True)
 plt.show()
