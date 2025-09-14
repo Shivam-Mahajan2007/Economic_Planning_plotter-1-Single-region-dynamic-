@@ -255,8 +255,7 @@ plt.show()
 fig2, ax2 = plt.subplots(figsize=(10, 5))
 ax2.plot(T, INVESTMENT_SHORT_SERIES, label="Short-term Investment")
 ax2.plot(T, INVESTMENT_LONG_SERIES, label="Long-term Investment")
-ax2.plot(T, np.array(INVESTMENT_SHORT_SERIES) + np.array(INVESTMENT_LONG_SERIES),
-         linestyle="--", color="gray", label="Total Investment")
+ax2.plot(T, np.array(INVESTMENT_SHORT_SERIES) + np.array(INVESTMENT_LONG_SERIES), linestyle="--", color="gray", label="Total Investment")
 ax2.set_title("Short-term vs Long-term Investment")
 ax2.set_ylabel("Investment Units")
 ax2.set_xlabel("Time Step")
@@ -269,7 +268,7 @@ plt.show()
 # -----------------------------
 fig3, ax3 = plt.subplots(figsize=(10, 6))
 for i, series in PRICE_SERIES_INDS.items():
-    ax3.plot(T, series, label=f"Industry {i}")
+ax3.plot(T, series, label=f"Industry {i}")
 ax3.set_title("Prices in Selected Industries")
 ax3.set_ylabel("Price")
 ax3.set_xlabel("Time Step")
